@@ -9,6 +9,7 @@
     "dotenv": "^17.2.3",
     "ejs": "^3.1.9",
     "express": "^4.19.2",
-    "express-session": "^1.18.2"
+    "express-session": "^1.18.2",
+    "multer": "^2.0.2"
   }
 }
