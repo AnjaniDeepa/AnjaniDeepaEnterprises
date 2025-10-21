@@ -48,20 +48,21 @@ const upload = multer({
   }
 });
 
-// Resend setup for API-based email sending
-const { Resend } = require('resend');
-let resend = null;
+// === SENDGRID SETUP (REPLACES NODEMAILER) ===
+const sgMail = require('@sendgrid/mail');
 let mailerConfigured = false;
-const COMPANY_EMAIL = process.env.SMTP_USER; // Use SMTP_USER for 'from' address
+// Use process.env.SMTP_USER for the verified SendGrid sender address (anjanideepaenterprises1@gmail.com)
+const COMPANY_EMAIL = process.env.SMTP_USER || 'contact@anjanideepa.example'; 
 
-if (process.env.RESEND_API_KEY) {
-  resend = new Resend(process.env.RESEND_API_KEY);
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
   mailerConfigured = true;
-  console.log('Resend Mailer configured via API.');
+  console.log('SendGrid Mailer configured via API.');
 } else {
-  // Fallback/Warning for environments without RESEND_API_KEY
-  console.log('Resend Mailer not configured. Set RESEND_API_KEY to enable email sending.');
+  // Fallback/Warning for environments without SENDGRID_API_KEY
+  console.log('SendGrid Mailer not configured. Set SENDGRID_API_KEY to enable email sending.');
 }
+// ===========================================
 
 // email logging (write attempts to a newline-delimited JSON log)
 const MAIL_LOG = path.join(__dirname, 'data', 'email-log.jsonl');
@@ -130,9 +131,9 @@ app.get('/jobs/:id/apply', (req, res) => {
   res.render('apply', { job, error: null });
 });
 
-// NOTE: Changed to async to use await for Resend API call
+// NOTE: Set as async to use await for SendGrid API call
 app.post('/jobs/:id/apply', async (req, res) => { 
-  upload.single('resume')(req, res, async (err) => { // Added async here too
+  upload.single('resume')(req, res, async (err) => { 
     const jobs = readJobs();
     const job = jobs.find(j => String(j.id) === String(req.params.id));
     if (!job) return res.status(404).send('Job not found');
@@ -185,10 +186,10 @@ app.post('/jobs/:id/apply', async (req, res) => {
     apps.push(application);
     writeApplications(apps);
 
-    // Prepare email content
-    const mailOptions = {
-      from: COMPANY_EMAIL,
+    // Prepare SendGrid mail object
+    const msg = {
       to: application.email,
+      from: COMPANY_EMAIL, // Must be the verified single sender: anjanideepaenterprises1@gmail.com
       subject: `Application Received: ${job.title} at Anjani Deepa Enterprises`,
       text: `Dear ${application.name},\n\nSuccess! We've received your application for the ${job.title} role at Anjani Deepa Enterprises.\n\nYour profile is now under review by our hiring team. We appreciate your interest in joining us and will be in touch if your experience matches this exciting opportunity.\n\nGood luck!\n\nBest regards,\nThe Recruitment Team\nAnjani Deepa Enterprises`,
       html: `<p>Dear ${application.name},</p>
@@ -197,33 +198,27 @@ app.post('/jobs/:id/apply', async (req, res) => {
             <p>Your passion for the role is clear, and your profile is now under careful review by our dedicated hiring team. We're excited to evaluate your experience.</p>
             <p>We will contact you directly if your background and qualifications align with this exciting opportunity.</p>
             <p>Wishing you the very best of luck!</p>
-            <p>Best regards,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`
+            <p>Best regards,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`,
+      // NOTE: Attachments can be complex, omitted for simplicity to fix core issue.
     };
     
-    // Send email using Resend API
-    if (mailerConfigured && resend) {
+    // Send email using SendGrid API
+    if (mailerConfigured) {
       try {
-        // Resend API: Only sending text/html body for simplicity.
-        // Attaching the file would require reading it into a buffer and configuring the 'attachments' array differently.
-        await resend.emails.send({
-          from: COMPANY_EMAIL,
-          to: application.email,
-          subject: mailOptions.subject,
-          text: mailOptions.text,
-          html: mailOptions.html
-        });
+        const [response] = await sgMail.send(msg);
         
-        console.log('Confirmation email sent to', application.email);
-        logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: true });
+        console.log('Confirmation email sent to', application.email, 'SendGrid Status:', response.statusCode);
+        logMailAttempt({ to: application.email, subject: msg.subject, sent: true, status: response.statusCode });
         
       } catch (err) {
-        console.error('Error sending email via Resend API', err);
-        logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, error: String(err) });
+        // Log the actual error object from SendGrid
+        console.error('Error sending email via SendGrid API', err.response ? err.response.body : err); 
+        logMailAttempt({ to: application.email, subject: msg.subject, sent: false, error: String(err) });
       }
 
     } else {
-      console.log('Email (not sent) would be:', mailOptions);
-      logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, note: 'Resend not configured' });
+      console.log('Email (not sent) would be:', msg);
+      logMailAttempt({ to: application.email, subject: msg.subject, sent: false, note: 'SendGrid not configured' });
     }
     
     res.render('apply-success', { job, application });
@@ -376,8 +371,8 @@ app.post('/admin/applications/:id/reject', async (req, res) => {
     const job = jobs.find(j => j.id === applicationToReject.jobId);
     if (job) jobTitle = job.title;
 
-    // Prepare email content
-    const mailOptions = {
+    // Prepare SendGrid mail object
+    const msg = {
       from: COMPANY_EMAIL,
       to: applicationToReject.email,
       subject: `Update on Your Application for ${jobTitle}`,
@@ -389,25 +384,21 @@ app.post('/admin/applications/:id/reject', async (req, res) => {
             <p>Sincerely,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`
     };
 
-    // Send email using Resend API
-    if (mailerConfigured && resend) {
+    // Send email using SendGrid API
+    if (mailerConfigured) {
       try {
-        await resend.emails.send({
-          from: COMPANY_EMAIL,
-          to: applicationToReject.email,
-          subject: mailOptions.subject,
-          text: mailOptions.text,
-          html: mailOptions.html
-        });
-        console.log('Rejection email sent to', applicationToReject.email);
-        logMailAttempt({ to: applicationToReject.email, subject: mailOptions.subject, sent: true, note: 'Rejection' });
+        const [response] = await sgMail.send(msg);
+        
+        console.log('Rejection email sent to', applicationToReject.email, 'SendGrid Status:', response.statusCode);
+        logMailAttempt({ to: applicationToReject.email, subject: msg.subject, sent: true, status: response.statusCode, note: 'Rejection' });
+        
       } catch (err) {
-        console.error('Error sending rejection email via Resend API', err);
-        logMailAttempt({ to: applicationToReject.email, subject: mailOptions.subject, sent: false, note: 'Rejection - Resend error' });
+        console.error('Error sending rejection email via SendGrid API', err.response ? err.response.body : err);
+        logMailAttempt({ to: applicationToReject.email, subject: msg.subject, sent: false, note: 'Rejection - SendGrid error' });
       }
     } else {
-      console.log('Rejection email (not sent, Resend not configured) would be:', mailOptions);
-      logMailAttempt({ to: applicationToReject.email, subject: mailOptions.subject, sent: false, note: 'Rejection - not configured' });
+      console.log('Rejection email (not sent, SendGrid not configured) would be:', msg);
+      logMailAttempt({ to: applicationToReject.email, subject: msg.subject, sent: false, note: 'Rejection - not configured' });
     }
 
     const remainingApps = apps.filter((_, index) => index !== appIndex);
