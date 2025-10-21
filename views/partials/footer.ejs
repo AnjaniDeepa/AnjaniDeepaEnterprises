@@ -1,0 +1,45 @@
+    </main>
+  </div>
+  <footer class="footer">
+    <p>&copy; <%= new Date().getFullYear() %> Anjani Deepa Enterprises</p>
+  </footer>
+  <script>
+    (function(){
+      // Re-added the menu toggle logic
+      const toggle = document.getElementById('menuToggle');
+      const nav = document.getElementById('mainNav');
+
+      // Exit early if elements are missing (e.g., on pages without the full header setup)
+      if (!toggle || !nav) return; 
+
+      function openNav() {
+        nav.classList.add('open');
+        nav.setAttribute('aria-hidden','false');
+        toggle.setAttribute('aria-expanded','true');
+      }
+      function closeNav() {
+        nav.classList.remove('open');
+        nav.setAttribute('aria-hidden','true');
+        toggle.setAttribute('aria-expanded','false');
+      }
+      
+      toggle.addEventListener('click', () => {
+        if (nav.classList.contains('open')) closeNav(); else openNav();
+      });
+      
+      // close when clicking outside
+      document.addEventListener('click', (e) => {
+        // Only close if the click target is outside the navigation and outside the toggle button
+        if (!nav.contains(e.target) && !toggle.contains(e.target) && nav.classList.contains('open')) {
+             closeNav();
+        }
+      });
+      
+      // close on Escape
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeNav();
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= title || 'Anjani Deepa Enterprises' %></title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <!-- Font Awesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" xintegrity="sha512-iBBXm8fW90+z7I9p/QcK+tWk6RkG7oQf45gqC0D5/e6iN7r1z1J4p/aA3w4+c0G3h9+2u7aA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+</head>
+<body class="page-root">
+  <header class="topbar">
+    <!-- Logo -->
+    <a href="/" class="topbar-logo-link">
+      <img src="/images/logo.png" alt="logo" class="logo" />
+    </a>
+    
+    <!-- Brand Name (CENTER) -->
+    <div class="brand">
+      <center><h1 class="company-name">Anjani Deepa Enterprises</h1></center>
+      <p class="company-caption">Ecosafe Industry Protection & Compliance</p>
+    </div>
+    
+    <!-- Navigation and Toggle Button (RIGHT) -->
+    <div class="topbar-right-actions">
+      <!-- Hamburger Toggle Button -->
+      <button class="hamburger" id="menuToggle" aria-expanded="false" aria-controls="mainNav">
+          <i class="fas fa-bars"></i>
+      </button>
+      
+      <nav id="mainNav" class="nav">
+        <!-- ALL LINKS are now inside the collapsible NAV -->
+        <a href="/">Home</a>
+        <a href="/about">About Us</a>
+        <a href="/jobs">Jobs</a>
+        <a href="/contact">Contact</a>
+        <!-- The Admin button is now a link inside the menu -->
+        <a href="/admin" class="btn-admin-login">Admin</a>
+      </nav>
+    </div>
+  </header>
+  <div class="page-wrapper">
+    <main class="container">

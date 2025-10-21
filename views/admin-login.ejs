@@ -1,0 +1,31 @@
+<%- include('partials/header', { title: 'Admin Login' }) %>
+
+<section class="card login-card">
+  <div class="lock-icon">
+    <center><i class="fas fa-lock"></i></center>
+  </div>
+  <center><h2>Admin Login</h2></center>
+  <center><p>Anjani Deepa Enterprises</p></center>
+  
+  <% if (error) { %>
+    <p class="error" style="color: var(--color-error); font-weight: 600;"><%= error %></p>
+  <% } %>
+  
+  <form method="post" action="/admin/login">
+    <label>Username</label>
+    <!-- Placeholder added for sleek look -->
+    <input name="username" required placeholder="Enter your username">
+    
+    <label>Password</label>
+    <!-- Placeholder added for sleek look -->
+    <input name="password" type="password" required placeholder="Enter your password">
+    
+    <button type="submit">
+      <i class="fas fa-sign-in-alt"></i> Login
+    </button>
+  </form>
+
+  
+</section>
+
+<%- include('partials/footer') %>

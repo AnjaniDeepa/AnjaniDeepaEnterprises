@@ -1,0 +1,10 @@
+<%- include('partials/header', { title: 'Application Received' }) %>
+
+<section class="card">
+  <h2>Application Received</h2>
+  <p>Thank you, <strong><%= application.name %></strong>. Your application for <strong><%= job.title %></strong> has been received.</p>
+  <p>We will contact you at <%= application.email %> if your profile matches the role.</p>
+  <a href="/jobs">Back to jobs</a>
+</section>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,67 @@
+<%- include('partials/header', { title: 'Home' }) %>
+
+<!-- 1. FULL-WIDTH HERO SECTION (Matching Screenshot) -->
+<section class="full-width-header-section hero">
+  <div class="full-width-header-content">
+    <h2>Welcome to Anjani Deepa Enterprises</h2>
+    <p>Discover exciting career opportunities and join our team of talented professionals. Build your future with us.</p>
+    <a href="/jobs" class="apply-link" style="width: auto; margin: 30px auto 0; font-size: 1.1rem; padding: 14px 25px;">
+        View Job Openings <i class="fas fa-arrow-right" style="margin-left: 8px;"></i>
+    </a>
+  </div>
+</section>
+
+<!-- 2. STATS GRID (Matching Screenshot) -->
+<div class="stats-grid">
+    <!-- Total Jobs Status Card -->
+    <div class="card stat-card">
+        <div class="icon"><i class="fas fa-briefcase"></i></div>
+        <h4>0+</h4>
+        <p class="text-muted">Open Positions</p>
+    </div>
+    
+    <!-- Team Members Status Card -->
+    <div class="card stat-card">
+        <div class="icon"><i class="fas fa-users"></i></div>
+        <h4>100+</h4>
+        <p class="text-muted">Team Members</p>
+    </div>
+    
+    <!-- Years of Experience Card -->
+    <div class="card stat-card">
+        <div class="icon"><i class="fas fa-chart-line"></i></div>
+        <h4>25+</h4>
+        <p class="text-muted">Years of Excellence</p>
+    </div>
+</div>
+
+
+
+<section class="card">
+  <h3>Latest Job Openings</h3>
+  <% if (jobs && jobs.length) { %>
+    <ul class="job-list">
+      <% jobs.slice(0, 3).reverse().forEach(job => { %>
+        <!-- Each job listing is clickable -->
+        <a href="/jobs/<%= job.id %>/apply" class="job-link">
+          <li class="job-item">
+            <div class="meta">
+              <strong><%= job.title %></strong> — <%= job.location %>
+              <p class="small muted">Openings: <%= job.openings || 1 %> • Exp: <%= job.experience || 0 %> yrs</p>
+            </div>
+            <div class="actions">
+                <i class="fas fa-arrow-right"></i>
+            </div>
+          </li>
+        </a>
+      <% }) %>
+    </ul>
+    <div class="text-center" style="margin-top: 20px;">
+        <a href="/jobs" class="apply-link" style="width: auto;">View All Openings</a>
+    </div>
+  <% } else { %>
+    <p class="text-center">No open positions right now. Check back later.</p>
+  <% } %>
+</section>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,19 @@
+<%- include('partials/header', { title: 'Apply' }) %>
+
+<section class="card">
+  <h2>Apply for: <%= job.title %></h2>
+  <% if (error) { %>
+    <p class="error"><%= error %></p>
+  <% } %>
+  <form method="post" action="/jobs/<%= job.id %>/apply" enctype="multipart/form-data">
+    <label>Name<br><input name="name" required value="<%= typeof form !== 'undefined' && form.name ? form.name : '' %>"></label>
+    <label>Email<br><input name="email" type="email" required value="<%= typeof form !== 'undefined' && form.email ? form.email : '' %>"></label>
+    <label>Phone<br><input name="phone" required pattern="[0-9+\-\s]{7,20}" title="Enter a valid phone number" value="<%= typeof form !== 'undefined' && form.phone ? form.phone : '' %>"></label>
+    <label>Resume (PDF/DOC, 50KB - 5MB)<br><input name="resume" type="file" accept=".pdf,.doc,.docx" required></label>
+    <label>Cover Letter<br><textarea name="cover" required><%= typeof form !== 'undefined' && form.cover ? form.cover : '' %></textarea></label>
+    <button type="button" onclick="window.history.back();">Cancel</button>
+    <button type="submit">Submit Application</button>
+  </form>
+</section>
+
+<%- include('partials/footer') %>

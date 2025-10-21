@@ -1,0 +1,25 @@
+<%- include('partials/header', { title: 'Job Openings' }) %>
+
+<section class="card">
+  <h2>Current Openings</h2>
+  <% if (jobs && jobs.length) { %>
+    <ul class="job-list">
+      <% jobs.slice().reverse().forEach(job => { %>
+        <li class="job-item">
+          <div class="meta">
+            <h3><%= job.title %></h3>
+            <p class="small muted"><%= job.location %> • Openings: <%= job.openings || 1 %> • Exp: <%= job.experience || 0 %> yrs • Posted: <%= new Date(job.postedAt).toLocaleString() %></p>
+            <p><%= job.description %></p>
+          </div>
+          <div class="actions">
+            <a class="apply-link" href="/jobs/<%= job.id %>/apply">Apply</a>
+          </div>
+        </li>
+      <% }) %>
+    </ul>
+  <% } else { %>
+    <p>No jobs posted yet.</p>
+  <% } %>
+</section>
+
+<%- include('partials/footer') %>
