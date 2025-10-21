@@ -1,3 +1,4 @@
+// ==================== Load environment ====================
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -6,24 +7,22 @@ const bodyParser = require('body-parser');
 const session = require('express-session');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const sgTransport = require('nodemailer-sendgrid-transport');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ========== Express setup ==========
+// ==================== View Engine ====================
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+// ==================== Middleware ====================
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'supersecret',
-  resave: false,
-  saveUninitialized: false
-}));
+app.use(session({ secret: process.env.SESSION_SECRET || 'change-this-secret', resave: false, saveUninitialized: false }));
 
-// ========== Multer setup ==========
+// ==================== File Uploads ====================
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
@@ -34,6 +33,7 @@ const storage = multer.diskStorage({
 
 const MIN_RESUME_BYTES = 50 * 1024;
 const MAX_RESUME_BYTES = 5 * 1024 * 1024;
+
 const allowedMime = [
   'application/pdf',
   'application/msword',
@@ -47,135 +47,141 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExt.includes(ext) && allowedMime.includes(file.mimetype)) return cb(null, true);
-    cb(new Error('Invalid file type. Only PDF, DOC, DOCX allowed.'));
+    if (allowedExt.includes(ext)) return cb(null, true);
+    cb(new Error('Invalid file type. Only PDF, DOC, DOCX allowed'));
   }
 });
 
-// ========== Nodemailer ==========
+// ==================== Nodemailer Setup ====================
 let mailer = null;
-if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+
+// 1. SendGrid API fallback
+if (process.env.SENDGRID_API_KEY) {
+  mailer = nodemailer.createTransport(sgTransport({ auth: { api_key: process.env.SENDGRID_API_KEY } }));
+  console.log('Mailer configured using SendGrid API');
+}
+// 2. Standard SMTP
+else if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   mailer = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
     secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    logger: true,
+    debug: true
   });
-} else console.log('⚠️ Mailer not configured. Emails will not be sent.');
 
-// ========== Data helpers ==========
-const DATA_DIR = path.join(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-
-const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
-const APPS_FILE = path.join(DATA_DIR, 'applications.json');
-const MAIL_LOG = path.join(DATA_DIR, 'email-log.jsonl');
-
-function readJSON(file) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } 
-  catch { return []; }
+  mailer.verify((error, success) => {
+    if (error) console.error('SMTP Connection Error:', error);
+    else console.log('SMTP Connected:', success);
+  });
+} else {
+  console.log('Mailer not configured. Emails will not be sent.');
 }
-function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
-}
+
+// ==================== Email Logging ====================
+const MAIL_LOG = path.join(__dirname, 'data', 'email-log.jsonl');
 function logMailAttempt(entry) {
-  try { fs.appendFileSync(MAIL_LOG, JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n'); } 
-  catch (e) { console.error('Failed to write mail log', e); }
+  try {
+    const line = JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n';
+    fs.appendFileSync(MAIL_LOG, line, 'utf8');
+  } catch (e) {
+    console.error('Failed to write mail log', e);
+  }
 }
 
-// ========== Middleware ==========
+// ==================== Data Files ====================
+const JOBS_FILE = path.join(__dirname, 'data', 'jobs.json');
+const APPS_FILE = path.join(__dirname, 'data', 'applications.json');
+
+function readJobs() { try { return JSON.parse(fs.readFileSync(JOBS_FILE, 'utf8')); } catch (e) { return []; } }
+function writeJobs(jobs) { fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), 'utf8'); }
+function readApplications() { try { return JSON.parse(fs.readFileSync(APPS_FILE, 'utf8')); } catch (e) { return []; } }
+function writeApplications(apps) { fs.writeFileSync(APPS_FILE, JSON.stringify(apps, null, 2), 'utf8'); }
+
+// ==================== Middleware ====================
 app.use((req, res, next) => {
   res.locals.user = req.session.user || null;
   next();
 });
 
-// ========== Public routes ==========
-app.get('/', (req, res) => res.render('home', { jobs: readJSON(JOBS_FILE) }));
-app.get('/about', (req, res) => res.render('about'));
-app.get('/jobs', (req, res) => res.render('jobs', { jobs: readJSON(JOBS_FILE) }));
+// ==================== Routes ====================
+app.get('/', (req, res) => { res.render('home', { jobs: readJobs() }); });
+app.get('/about', (req, res) => { res.render('about'); });
+app.get('/jobs', (req, res) => { res.render('jobs', { jobs: readJobs() }); });
 
 app.get('/jobs/:id/apply', (req, res) => {
-  const job = readJSON(JOBS_FILE).find(j => String(j.id) === String(req.params.id));
+  const job = readJobs().find(j => String(j.id) === String(req.params.id));
   if (!job) return res.status(404).send('Job not found');
-  res.render('apply', { job, error: null });
+  res.render('apply', { job, error: null, form: {} });
 });
 
-// Apply POST
+// ==================== Job Application ====================
 app.post('/jobs/:id/apply', (req, res) => {
-  upload.single('resume')(req, res, async err => {
-    const job = readJSON(JOBS_FILE).find(j => String(j.id) === String(req.params.id));
+  upload.single('resume')(req, res, async (err) => {
+    const job = readJobs().find(j => String(j.id) === String(req.params.id));
     if (!job) return res.status(404).send('Job not found');
 
     const { name, email, phone, cover } = req.body || {};
     const form = { name, email, phone, cover };
 
-    if (err) {
-      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
-      return res.render('apply', { job, error: err.message || 'File upload error', form });
-    }
+    if (err) return res.render('apply', { job, error: err.message, form });
 
-    if (!name || !email || !phone || !cover) {
-      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
-      return res.render('apply', { job, error: 'All fields required', form });
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
-      return res.render('apply', { job, error: 'Invalid email', form });
-    }
-    if (!/^[0-9+\-\s]{7,20}$/.test(phone)) {
-      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
-      return res.render('apply', { job, error: 'Invalid phone', form });
-    }
+    if (!name || !email || !phone || !cover) return res.render('apply', { job, error: 'All fields required', form });
     if (!req.file) return res.render('apply', { job, error: 'Resume required', form });
 
-    const stats = fs.statSync(req.file.path);
-    if (stats.size < MIN_RESUME_BYTES) {
-      fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
-      return res.render('apply', { job, error: 'Resume too small (50 KB min)', form });
+    // Check file size
+    try {
+      const stats = fs.statSync(req.file.path);
+      if (stats.size < MIN_RESUME_BYTES) throw new Error('Resume too small');
+    } catch (e) {
+      return res.render('apply', { job, error: 'Resume invalid', form });
     }
 
-    const apps = readJSON(APPS_FILE);
-    const application = {
-      id: Date.now(),
-      jobId: job.id,
-      name, email, phone, cover,
-      resume: '/uploads/' + path.basename(req.file.path),
-      appliedAt: new Date().toISOString()
-    };
+    // Save application
+    const apps = readApplications();
+    const application = { id: Date.now(), jobId: job.id, name, email, phone, cover, resume: '/uploads/' + path.basename(req.file.path), appliedAt: new Date().toISOString() };
     apps.push(application);
-    writeJSON(APPS_FILE, apps);
+    writeApplications(apps);
 
     // Send email
-    const companyEmail = process.env.SMTP_USER || 'contact@anjanideepa.example';
+    const companyEmail = process.env.SMTP_USER || process.env.DEFAULT_FROM_EMAIL || 'contact@anjanideepa.example';
     const mailOptions = {
       from: companyEmail,
-      to: application.email,
+      to: email,
       subject: `Application Received: ${job.title}`,
-      text: `Dear ${application.name}, We received your application for ${job.title}.`,
-      html: `<p>Dear ${application.name},</p><p>We received your application for <strong>${job.title}</strong>.</p><p>Regards, Anjani Deepa Enterprises</p>`,
-      attachments: [{ filename: path.basename(application.resume), path: path.join(__dirname, application.resume) }]
+      text: `Dear ${name},\n\nWe received your application for ${job.title}.\n\nThanks!`,
+      html: `<p>Dear ${name},</p><p>Your application for <strong>${job.title}</strong> has been received.</p>`,
+      attachments: [{ path: path.resolve(__dirname, '.' + application.resume) }]
     };
+
     if (mailer) {
       try {
         await mailer.sendMail(mailOptions);
-        logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: true });
+        console.log('Email sent to', email);
+        logMailAttempt({ to: email, subject: mailOptions.subject, sent: true });
       } catch (e) {
-        console.error('Email error', e);
-        logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, error: String(e) });
+        console.error('Email send error:', e);
+        logMailAttempt({ to: email, subject: mailOptions.subject, sent: false, error: String(e) });
       }
-    } else logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, note: 'Mailer not configured' });
+    } else {
+      console.log('Mailer not configured, email skipped:', mailOptions);
+      logMailAttempt({ to: email, subject: mailOptions.subject, sent: false, note: 'not configured' });
+    }
 
     res.render('apply-success', { job, application });
   });
 });
 
-app.get('/contact', (req, res) => res.render('contact'));
+// ==================== Contact ====================
+app.get('/contact', (req, res) => { res.render('contact'); });
 
-// ========== Admin ==========
+// ==================== Admin ====================
 const ADMIN_USER = { username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD };
 
 app.get('/admin', (req, res) => {
-  if (!req.session.user) return res.render('admin-login', { error: null, applications: [] });
-  res.render('admin', { jobs: readJSON(JOBS_FILE), applications: readJSON(APPS_FILE), message: null });
+  if (!req.session.user) return res.render('admin-login', { error: null });
+  res.render('admin', { jobs: readJobs(), applications: readApplications() });
 });
 
 app.post('/admin/login', (req, res) => {
@@ -187,96 +193,77 @@ app.post('/admin/login', (req, res) => {
   res.render('admin-login', { error: 'Invalid credentials' });
 });
 
-app.post('/admin/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
+app.post('/admin/logout', (req, res) => { req.session.destroy(() => res.redirect('/')); });
 
-// ========== Admin: Jobs ==========
+// ==================== Admin Job CRUD ====================
 app.post('/admin/jobs', (req, res) => {
   if (!req.session.user) return res.status(403).send('Forbidden');
   const { title, location, description, openings, experience } = req.body;
-  const jobs = readJSON(JOBS_FILE);
-  jobs.push({
-    id: Date.now(),
-    title, location, description,
-    openings: Math.max(1, parseInt(openings) || 1),
-    experience: Math.max(0, Math.min(50, parseInt(experience) || 0)),
-    postedAt: new Date().toISOString()
-  });
-  writeJSON(JOBS_FILE, jobs);
+  const jobs = readJobs();
+  jobs.push({ id: Date.now(), title, location, description, openings: parseInt(openings)||1, experience: parseInt(experience)||0, postedAt: new Date().toISOString() });
+  writeJobs(jobs);
   res.redirect('/admin');
 });
 
 app.post('/admin/jobs/:id/delete', (req, res) => {
   if (!req.session.user) return res.status(403).send('Forbidden');
-  const id = String(req.params.id);
-  let jobs = readJSON(JOBS_FILE);
-  jobs = jobs.filter(j => String(j.id) !== id);
-  writeJSON(JOBS_FILE, jobs);
-
-  // Delete associated applications & resumes
-  let apps = readJSON(APPS_FILE);
-  apps.forEach(app => {
-    if (String(app.jobId) === id && app.resume) {
-      const fullPath = path.join(__dirname, app.resume.replace(/^\/+/, '').split('/').join(path.sep));
-      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-    }
-  });
-  apps = apps.filter(app => String(app.jobId) !== id);
-  writeJSON(APPS_FILE, apps);
-
+  const id = req.params.id;
+  const jobs = readJobs().filter(j => String(j.id) !== id);
+  writeJobs(jobs);
+  // delete applications for that job
+  const apps = readApplications().filter(a => String(a.jobId) !== id);
+  writeApplications(apps);
   res.redirect('/admin');
 });
 
-// ========== Admin: Applications ==========
+// ==================== Admin Application Delete ====================
 app.post('/admin/applications/:id/delete', (req, res) => {
   if (!req.session.user) return res.status(403).send('Forbidden');
-  const id = String(req.params.id);
-  let apps = readJSON(APPS_FILE);
-  apps.forEach(app => {
-    if (String(app.id) === id && app.resume) {
-      const fullPath = path.join(__dirname, app.resume.replace(/^\/+/, '').split('/').join(path.sep));
-      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-    }
-  });
-  apps = apps.filter(app => String(app.id) !== id);
-  writeJSON(APPS_FILE, apps);
+  const id = req.params.id;
+  const apps = readApplications().filter(a => String(a.id) !== id);
+  writeApplications(apps);
   res.redirect('/admin');
 });
 
-// ========== Admin: Reject application ==========
+// ==================== Application Rejection ====================
 app.post('/admin/applications/:id/reject', async (req, res) => {
   if (!req.session.user) return res.status(403).send('Forbidden');
-  const id = String(req.params.id);
-  const apps = readJSON(APPS_FILE);
-  const appIndex = apps.findIndex(a => String(a.id) === id);
-  if (appIndex === -1) return res.redirect('/admin');
+  const id = req.params.id;
+  const apps = readApplications();
+  const index = apps.findIndex(a => String(a.id) === id);
+  if (index === -1) return res.redirect('/admin');
 
-  const appToReject = apps[appIndex];
-  const job = readJSON(JOBS_FILE).find(j => j.id === appToReject.jobId);
+  const appToReject = apps[index];
+  const job = readJobs().find(j => j.id === appToReject.jobId);
+  const jobTitle = job ? job.title : 'the job';
 
   // Send rejection email
-  const companyEmail = process.env.SMTP_USER || 'contact@anjanideepa.example';
-  const mailOptions = {
-    from: companyEmail,
-    to: appToReject.email,
-    subject: `Update on your application for ${job?.title || 'a job'}`,
-    text: `Dear ${appToReject.name}, we regret to inform you...`,
-    html: `<p>Dear ${appToReject.name},</p><p>We regret to inform you...</p>`
-  };
   if (mailer) {
-    try { await mailer.sendMail(mailOptions); logMailAttempt({ to: appToReject.email, subject: mailOptions.subject, sent: true }); }
-    catch (e) { console.error('Email error', e); logMailAttempt({ to: appToReject.email, subject: mailOptions.subject, sent: false, error: String(e) }); }
+    try {
+      await mailer.sendMail({
+        from: process.env.SMTP_USER || 'contact@anjanideepa.example',
+        to: appToReject.email,
+        subject: `Update on Your Application for ${jobTitle}`,
+        text: `Dear ${appToReject.name},\nWe regret to inform you...`,
+        html: `<p>Dear ${appToReject.name},</p><p>We regret to inform you...</p>`
+      });
+      logMailAttempt({ to: appToReject.email, subject: `Update on Your Application for ${jobTitle}`, sent: true });
+    } catch (e) {
+      console.error('Email error:', e);
+      logMailAttempt({ to: appToReject.email, subject: `Update on Your Application for ${jobTitle}`, sent: false, error: String(e) });
+    }
   }
 
-  // Remove resume file
+  // Delete application and resume
   if (appToReject.resume) {
-    const fullPath = path.join(__dirname, appToReject.resume.replace(/^\/+/, '').split('/').join(path.sep));
+    const fullPath = path.join(__dirname, appToReject.resume.replace(/^\/+/, ''));
     if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
   }
 
-  apps.splice(appIndex, 1);
-  writeJSON(APPS_FILE, apps);
+  apps.splice(index, 1);
+  writeApplications(apps);
   res.redirect('/admin');
 });
 
-// ========== Start server ==========
-app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+// ==================== Start Server ====================
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
