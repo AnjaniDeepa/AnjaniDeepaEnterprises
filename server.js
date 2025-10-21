@@ -52,7 +52,7 @@ const upload = multer({
 const { Resend } = require('resend');
 let resend = null;
 let mailerConfigured = false;
-const COMPANY_EMAIL = process.env.SMTP_USER || 'contact@anjanideepa.example'; // Use SMTP_USER for 'from' address
+const COMPANY_EMAIL = process.env.SMTP_USER; // Use SMTP_USER for 'from' address
 
 if (process.env.RESEND_API_KEY) {
   resend = new Resend(process.env.RESEND_API_KEY);
