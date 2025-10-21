@@ -52,28 +52,25 @@ const upload = multer({
   }
 });
 
-// ==================== Nodemailer Setup ====================
+const nodemailer = require('nodemailer');
+
 let mailer = null;
 
-// 1. SendGrid API fallback
-if (process.env.SENDGRID_API_KEY) {
-  mailer = nodemailer.createTransport(sgTransport({ auth: { api_key: process.env.SENDGRID_API_KEY } }));
-  console.log('Mailer configured using SendGrid API');
-}
-// 2. Standard SMTP
-else if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   mailer = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
     secure: process.env.SMTP_SECURE === 'true',
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    logger: true,
-    debug: true
   });
 
-  mailer.verify((error, success) => {
-    if (error) console.error('SMTP Connection Error:', error);
-    else console.log('SMTP Connected:', success);
+  // Test connection immediately
+  mailer.verify((err, success) => {
+    if (err) {
+      console.error('Mailer connection failed:', err);
+    } else {
+      console.log('Mailer ready to send messages');
+    }
   });
 } else {
   console.log('Mailer not configured. Emails will not be sent.');
@@ -144,34 +141,24 @@ app.post('/jobs/:id/apply', (req, res) => {
     apps.push(application);
     writeApplications(apps);
 
-    // Send email
-    const companyEmail = process.env.SMTP_USER || process.env.DEFAULT_FROM_EMAIL || 'contact@anjanideepa.example';
-    const mailOptions = {
-      from: companyEmail,
-      to: email,
-      subject: `Application Received: ${job.title}`,
-      text: `Dear ${name},\n\nWe received your application for ${job.title}.\n\nThanks!`,
-      html: `<p>Dear ${name},</p><p>Your application for <strong>${job.title}</strong> has been received.</p>`,
-      attachments: [{ path: path.resolve(__dirname, '.' + application.resume) }]
-    };
-
     if (mailer) {
-      try {
-        await mailer.sendMail(mailOptions);
-        console.log('Email sent to', email);
-        logMailAttempt({ to: email, subject: mailOptions.subject, sent: true });
-      } catch (e) {
-        console.error('Email send error:', e);
-        logMailAttempt({ to: email, subject: mailOptions.subject, sent: false, error: String(e) });
-      }
-    } else {
-      console.log('Mailer not configured, email skipped:', mailOptions);
-      logMailAttempt({ to: email, subject: mailOptions.subject, sent: false, note: 'not configured' });
-    }
+  mailer.sendMail(mailOptions)
+    .then(() => {
+      console.log('Confirmation email sent to', application.email);
+      logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: true });
+    })
+    .catch(err => {
+      console.error('Error sending email', err);
+      logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, error: String(err) });
+    });
+} else {
+  console.log('Email (not sent) would be:', mailOptions);
+  logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, note: 'not configured' });
+}
 
-    res.render('apply-success', { job, application });
-  });
-});
+// Immediately render success page without waiting for email
+res.render('apply-success', { job, application });
+
 
 // ==================== Contact ====================
 app.get('/contact', (req, res) => { res.render('contact'); });
