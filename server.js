@@ -1,35 +1,47 @@
-// load environment variables from .env if present
+// =========================
+// Load environment variables
+// =========================
 require('dotenv').config();
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const bodyParser = require('body-parser');
 const session = require('express-session');
+const multer = require('multer');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// =========================
+// Express setup
+// =========================
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
-// serve uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use(session({ secret: 'change-this-secret', resave: false, saveUninitialized: false }));
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'supersecret',
+  resave: false,
+  saveUninitialized: false
+}));
 
-// multer for file uploads
-const multer = require('multer');
+// =========================
+// Multer file uploads setup
+// =========================
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) { cb(null, uploadsDir); },
-  filename: function (req, file, cb) { cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_')); }
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'))
 });
-// Resume size limits
+
 const MIN_RESUME_BYTES = 50 * 1024; // 50 KB
 const MAX_RESUME_BYTES = 5 * 1024 * 1024; // 5 MB
-
 const allowedMime = [
   'application/pdf',
   'application/msword',
@@ -40,16 +52,16 @@ const allowedExt = ['.pdf', '.doc', '.docx'];
 const upload = multer({
   storage,
   limits: { fileSize: MAX_RESUME_BYTES },
-  fileFilter: function (req, file, cb) {
+  fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExt.includes(ext) && allowedMime.includes(file.mimetype)) return cb(null, true);
-    if (allowedExt.includes(ext)) return cb(null, true);
-    cb(new Error('Invalid file type. Only PDF, DOC and DOCX are allowed'));
+    cb(new Error('Invalid file type. Only PDF, DOC, DOCX allowed.'));
   }
 });
 
-// nodemailer setup (optional) - configure via environment variables
-const nodemailer = require('nodemailer');
+// =========================
+// Nodemailer setup
+// =========================
 let mailer = null;
 if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   mailer = nodemailer.createTransport({
@@ -59,186 +71,148 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
   });
 } else {
-  console.log('Mailer not configured. Set SMTP_HOST, SMTP_USER and SMTP_PASS to enable email sending.');
+  console.log('⚠️ Mailer not configured. Emails will not be sent.');
 }
 
-// email logging (write attempts to a newline-delimited JSON log)
-const MAIL_LOG = path.join(__dirname, 'data', 'email-log.jsonl');
+// =========================
+// File paths and helpers
+// =========================
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+
+const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
+const APPS_FILE = path.join(DATA_DIR, 'applications.json');
+const MAIL_LOG = path.join(DATA_DIR, 'email-log.jsonl');
+
 function logMailAttempt(entry) {
   try {
-    const line = JSON.stringify(Object.assign({ timestamp: new Date().toISOString() }, entry)) + '\n';
+    const line = JSON.stringify({ timestamp: new Date().toISOString(), ...entry }) + '\n';
     fs.appendFileSync(MAIL_LOG, line, 'utf8');
   } catch (e) {
     console.error('Failed to write mail log', e);
   }
 }
 
-const JOBS_FILE = path.join(__dirname, 'data', 'jobs.json');
-const APPS_FILE = path.join(__dirname, 'data', 'applications.json');
-function readJobs() {
-  try {
-    const raw = fs.readFileSync(JOBS_FILE, 'utf8');
-    return JSON.parse(raw);
-  } catch (e) {
-    return [];
-  }
+function readJSON(filePath) {
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
+  catch { return []; }
 }
 
-function writeJobs(jobs) {
-  fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), 'utf8');
+function writeJSON(filePath, data) {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function readApplications() {
-  try {
-    const raw = fs.readFileSync(APPS_FILE, 'utf8');
-    return JSON.parse(raw);
-  } catch (e) {
-    return [];
-  }
-}
-
-function writeApplications(apps) {
-  fs.writeFileSync(APPS_FILE, JSON.stringify(apps, null, 2), 'utf8');
-}
-
-// Middleware to expose user to views
+// =========================
+// Middleware
+// =========================
 app.use((req, res, next) => {
   res.locals.user = req.session.user || null;
   next();
 });
 
-app.get('/', (req, res) => {
-  const jobs = readJobs();
-  res.render('home', { jobs });
-});
-
-app.get('/about', (req, res) => {
-  res.render('about');
-});
-
-app.get('/jobs', (req, res) => {
-  const jobs = readJobs();
-  res.render('jobs', { jobs });
-});
+// =========================
+// Public routes
+// =========================
+app.get('/', (req, res) => res.render('home', { jobs: readJSON(JOBS_FILE) }));
+app.get('/about', (req, res) => res.render('about'));
+app.get('/jobs', (req, res) => res.render('jobs', { jobs: readJSON(JOBS_FILE) }));
 
 // Apply to a job form
 app.get('/jobs/:id/apply', (req, res) => {
-  const jobs = readJobs();
-  const job = jobs.find(j => String(j.id) === String(req.params.id));
+  const job = readJSON(JOBS_FILE).find(j => String(j.id) === String(req.params.id));
   if (!job) return res.status(404).send('Job not found');
   res.render('apply', { job, error: null });
 });
 
 app.post('/jobs/:id/apply', (req, res) => {
-  upload.single('resume')(req, res, err => {
-    const jobs = readJobs();
-    const job = jobs.find(j => String(j.id) === String(req.params.id));
+  upload.single('resume')(req, res, async err => {
+    const job = readJSON(JOBS_FILE).find(j => String(j.id) === String(req.params.id));
     if (!job) return res.status(404).send('Job not found');
-    const { name, email, phone, cover } = req.body || {};
-    const form = { name: name || '', email: email || '', phone: phone || '', cover: cover || '' };
 
+    const { name, email, phone, cover } = req.body || {};
+    const form = { name, email, phone, cover };
+
+    // Handle file upload errors
     if (err) {
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-        try { fs.unlinkSync(req.file.path); } catch (e) { console.error('Failed to remove bad upload', e); }
-      }
+      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
       return res.render('apply', { job, error: err.message || 'File upload error', form });
     }
 
+    // Validate fields
     if (!name || !email || !phone || !cover) {
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-        try { fs.unlinkSync(req.file.path); } catch (e) { }
-      }
+      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
       return res.render('apply', { job, error: 'All fields are required', form });
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
+      return res.render('apply', { job, error: 'Invalid email address', form });
+    }
+    if (!/^[0-9+\-\s]{7,20}$/.test(phone)) {
+      if (req.file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
+      return res.render('apply', { job, error: 'Invalid phone number', form });
+    }
+    if (!req.file) return res.render('apply', { job, error: 'Resume is required', form });
 
-    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRe.test(email)) {
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) try { fs.unlinkSync(req.file.path); } catch (e) { }
-      return res.render('apply', { job, error: 'Please enter a valid email address', form });
+    const stats = fs.statSync(req.file.path);
+    if (stats.size < MIN_RESUME_BYTES) {
+      fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
+      return res.render('apply', { job, error: 'Resume too small (min 50 KB)', form });
     }
 
-    const phoneRe = /^[0-9+\-\s]{7,20}$/;
-    if (!phoneRe.test(phone)) {
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) try { fs.unlinkSync(req.file.path); } catch (e) { }
-      return res.render('apply', { job, error: 'Please enter a valid phone number', form });
-    }
-
-    if (!req.file) return res.render('apply', { job, error: 'Resume is required and must be PDF/DOC/DOCX within size limits', form });
-
-    try {
-      const stats = fs.statSync(req.file.path);
-      if (stats.size < MIN_RESUME_BYTES) {
-        try { fs.unlinkSync(req.file.path); } catch (e) { }
-        return res.render('apply', { job, error: 'Resume file is too small (min 50 KB)', form });
-      }
-    } catch (e) {
-      return res.render('apply', { job, error: 'Could not process resume file', form });
-    }
-
-    const apps = readApplications();
-    const application = { id: Date.now(), jobId: job.id, name, email, phone, cover, resume: null, appliedAt: new Date().toISOString() };
-    if (req.file) {
-      application.resume = '/uploads/' + path.basename(req.file.path);
-    }
+    // Save application
+    const apps = readJSON(APPS_FILE);
+    const application = {
+      id: Date.now(),
+      jobId: job.id,
+      name, email, phone, cover,
+      resume: '/uploads/' + path.basename(req.file.path),
+      appliedAt: new Date().toISOString()
+    };
     apps.push(application);
-    writeApplications(apps);
+    writeJSON(APPS_FILE, apps);
 
+    // Send confirmation email
     const companyEmail = process.env.SMTP_USER || 'contact@anjanideepa.example';
     const mailOptions = {
       from: companyEmail,
       to: application.email,
       subject: `Application Received: ${job.title} at Anjani Deepa Enterprises`,
-      text: `Dear ${application.name},\n\nSuccess! We've received your application for the ${job.title} role at Anjani Deepa Enterprises.\n\nYour profile is now under review by our hiring team. We appreciate your interest in joining us and will be in touch if your experience matches this exciting opportunity.\n\nGood luck!\n\nBest regards,\nThe Recruitment Team\nAnjani Deepa Enterprises`,
-      html: `<p>Dear ${application.name},</p>
-             <h2>🎉 Application Received Successfully!</h2>
-             <p>Thank you for submitting your application for the <strong>${job.title}</strong> position at <strong>Anjani Deepa Enterprises</strong>.</p>
-             <p>Your passion for the role is clear, and your profile is now under careful review by our dedicated hiring team. We're excited to evaluate your experience.</p>
-             <p>We will contact you directly if your background and qualifications align with this exciting opportunity.</p>
-             <p>Wishing you the very best of luck!</p>
-             <p>Best regards,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`
+      text: `Dear ${application.name},\n\nWe received your application for ${job.title}.\n\nRegards,\nAnjani Deepa Enterprises`,
+      html: `<p>Dear ${application.name},</p><p>We received your application for <strong>${job.title}</strong>.</p><p>Regards,<br/>Anjani Deepa Enterprises</p>`,
+      attachments: [{ filename: path.basename(application.resume), path: path.join(__dirname, application.resume) }]
     };
-    if (application.resume) {
-      const resumePath = path.resolve(__dirname, '.' + application.resume);
-      mailOptions.attachments = [{ filename: path.basename(resumePath), path: resumePath }];
-    }
     if (mailer) {
-      mailer.sendMail(mailOptions).then(() => {
+      try {
+        await mailer.sendMail(mailOptions);
         console.log('Confirmation email sent to', application.email);
         logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: true });
-      }).catch(err => {
-        console.error('Error sending email', err);
-        logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, error: String(err) });
-      });
+      } catch (e) {
+        console.error('Error sending email', e);
+        logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, error: String(e) });
+      }
     } else {
-      console.log('Email (not sent) would be:', mailOptions);
-      logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, note: 'not configured' });
+      console.log('Mailer not configured, email not sent.');
+      logMailAttempt({ to: application.email, subject: mailOptions.subject, sent: false, note: 'Mailer not configured' });
     }
+
     res.render('apply-success', { job, application });
   });
 });
 
-app.get('/contact', (req, res) => {
-  res.render('contact');
-});
+app.get('/contact', (req, res) => res.render('contact'));
 
-// ====================== ADMIN LOGIN SECTION =========================
-
-// Admin credentials now stored in environment variables
+// =========================
+// Admin
+// =========================
 const ADMIN_USER = {
   username: process.env.ADMIN_USERNAME,
   password: process.env.ADMIN_PASSWORD
 };
 
-if (!ADMIN_USER.username || !ADMIN_USER.password) {
-  console.warn('⚠️  ADMIN_USERNAME or ADMIN_PASSWORD not set in environment variables.');
-}
-
 app.get('/admin', (req, res) => {
-  if (!req.session.user) {
-    return res.render('admin-login', { error: null, applications: [] });
-  }
-  const jobs = readJobs();
-  const applications = readApplications();
+  if (!req.session.user) return res.render('admin-login', { error: null, applications: [] });
+  const jobs = readJSON(JOBS_FILE);
+  const applications = readJSON(APPS_FILE);
   res.render('admin', { jobs, message: null, applications });
 });
 
@@ -251,165 +225,11 @@ app.post('/admin/login', (req, res) => {
   res.render('admin-login', { error: 'Invalid credentials' });
 });
 
-app.post('/admin/logout', (req, res) => {
-  req.session.destroy(() => res.redirect('/'));
-});
+app.post('/admin/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
 
-// ===================================================================
-
-// Protected: add job
-app.post('/admin/jobs', (req, res) => {
-  if (!req.session.user) return res.status(403).send('Forbidden');
-  const { title, location, description, openings, experience } = req.body;
-  const jobs = readJobs();
-  const id = Date.now();
-  const openingsNum = Math.max(1, parseInt(openings || '1', 10) || 1);
-  const expNum = Math.max(0, Math.min(50, parseInt(experience || '0', 10) || 0));
-  jobs.push({ id, title, location, description, openings: openingsNum, experience: expNum, postedAt: new Date().toISOString() });
-  writeJobs(jobs);
-  res.redirect('/admin');
-});
-
-// Protected: delete job
-app.post('/admin/jobs/:id/delete', (req, res) => {
-  if (!req.session.user) return res.status(403).send('Forbidden');
-  const jobs = readJobs();
-  const id = String(req.params.id);
-  const filtered = jobs.filter(j => String(j.id) !== id);
-  writeJobs(filtered);
-  const after = readJobs();
-  const stillExists = after.some(j => String(j.id) === id);
-  if (stillExists) {
-    console.error('Failed to delete job', id);
-    return res.status(500).send('Failed to delete job');
-  }
-
-  try {
-    const apps = readApplications();
-    const remaining = [];
-    apps.forEach(app => {
-      if (String(app.jobId) === id) {
-        if (app.resume) {
-          let resumePath = app.resume;
-          resumePath = resumePath.replace(/^\/+/, '');
-          resumePath = resumePath.split('/').join(path.sep).split('\\').join(path.sep);
-          const full = path.join(__dirname, resumePath);
-          try {
-            if (fs.existsSync(full)) fs.unlinkSync(full);
-          } catch (e) {
-            console.error('Failed to delete resume file', full, e);
-          }
-        }
-      } else {
-        remaining.push(app);
-      }
-    });
-    writeApplications(remaining);
-  } catch (e) {
-    console.error('Error while removing applications for job', id, e);
-  }
-
-  res.redirect('/admin');
-});
-
-// Protected: delete single application
-app.post('/admin/applications/:id/delete', (req, res) => {
-  if (!req.session.user) return res.status(403).send('Forbidden');
-  const id = String(req.params.id);
-  try {
-    const apps = readApplications();
-    const remaining = [];
-    apps.forEach(app => {
-      if (String(app.id) === id) {
-        if (app.resume) {
-          let resumePath = app.resume.replace(/^\/+/, '');
-          resumePath = resumePath.split('/').join(path.sep).split('\\').join(path.sep);
-          const full = path.join(__dirname, resumePath);
-          try {
-            if (fs.existsSync(full)) fs.unlinkSync(full);
-          } catch (e) {
-            console.error('Failed to delete resume file for application', id, full, e);
-          }
-        }
-      } else {
-        remaining.push(app);
-      }
-    });
-    writeApplications(remaining);
-    return res.redirect('/admin');
-  } catch (e) {
-    console.error('Error deleting application', id, e);
-    return res.status(500).send('Error deleting application');
-  }
-});
-
-// NEW: Protected: Reject application
-app.post('/admin/applications/:id/reject', async (req, res) => {
-  if (!req.session.user) return res.status(403).send('Forbidden');
-  const id = String(req.params.id);
-  let applicationToReject;
-  let jobTitle = 'a job';
-
-  try {
-    const apps = readApplications();
-    const jobs = readJobs();
-    const appIndex = apps.findIndex(app => String(app.id) === id);
-    if (appIndex === -1) {
-      console.error('Application not found for rejection:', id);
-      return res.redirect('/admin');
-    }
-
-    applicationToReject = apps[appIndex];
-    const job = jobs.find(j => j.id === applicationToReject.jobId);
-    if (job) jobTitle = job.title;
-
-    const companyEmail = process.env.SMTP_USER || 'contact@anjanideepa.example';
-    const mailOptions = {
-      from: companyEmail,
-      to: applicationToReject.email,
-      subject: `Update on Your Application for ${jobTitle}`,
-      text: `Dear ${applicationToReject.name},\n\nThank you for your interest in the ${jobTitle} position at Anjani Deepa Enterprises.\n\nWe appreciate you taking the time to apply. After careful review, we regret to inform you that we will not be moving forward with your application at this time.\n\nWe wish you the best in your job search and encourage you to follow our careers page for future opportunities.\n\nSincerely,\nThe Recruitment Team\nAnjani Deepa Enterprises`,
-      html: `<p>Dear ${applicationToReject.name},</p>
-             <p>Thank you for your interest in the <strong>${jobTitle}</strong> position at <strong>Anjani Deepa Enterprises</strong>.</p>
-             <p>We appreciate you taking the time to apply. After careful review, we regret to inform you that we will not be moving forward with your application at this time.</p>
-             <p>We wish you the best in your job search and encourage you to follow our careers page for future opportunities.</p>
-             <p>Sincerely,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`
-    };
-
-    if (mailer) {
-      await mailer.sendMail(mailOptions);
-      console.log('Rejection email sent to', applicationToReject.email);
-      logMailAttempt({ to: applicationToReject.email, subject: mailOptions.subject, sent: true, note: 'Rejection' });
-    } else {
-      console.log('Rejection email (not sent, mailer not configured) would be:', mailOptions);
-      logMailAttempt({ to: applicationToReject.email, subject: mailOptions.subject, sent: false, note: 'Rejection - not configured' });
-    }
-
-    const remainingApps = apps.filter((_, index) => index !== appIndex);
-
-    if (applicationToReject.resume) {
-      let resumePath = applicationToReject.resume.replace(/^\/+/, '');
-      resumePath = resumePath.split('/').join(path.sep).split('\\').join(path.sep);
-      const full = path.join(__dirname, resumePath);
-      try {
-        if (fs.existsSync(full)) fs.unlinkSync(full);
-      } catch (e) {
-        console.error('Failed to delete resume file after rejection:', full, e);
-      }
-    }
-
-    writeApplications(remainingApps);
-    console.log('Application rejected and deleted:', id);
-
-    return res.redirect('/admin');
-
-  } catch (e) {
-    console.error('Error processing application rejection:', id, e);
-    return res.redirect('/admin');
-  }
-});
-
+// =========================
 // Start server
+// =========================
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
