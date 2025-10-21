@@ -1,12 +1,14 @@
 // ==================== Load environment ====================
 require('dotenv').config();
+// At the top, after require('dotenv') and other modules
+const nodemailer = require('nodemailer');
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 const multer = require('multer');
-const nodemailer = require('nodemailer');
 const sgTransport = require('nodemailer-sendgrid-transport');
 
 const app = express();
@@ -52,7 +54,7 @@ const upload = multer({
   }
 });
 
-const nodemailer = require('nodemailer');
+
 
 let mailer = null;
 
@@ -253,4 +255,4 @@ app.post('/admin/applications/:id/reject', async (req, res) => {
 });
 
 // ==================== Start Server ====================
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`))
