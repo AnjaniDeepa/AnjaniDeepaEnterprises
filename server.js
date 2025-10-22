@@ -6,6 +6,9 @@ const fs = require('fs');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 
+// Use native fetch if available (Node 18+), otherwise require node-fetch
+const fetch = global.fetch || require('node-fetch'); 
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -48,19 +51,56 @@ const upload = multer({
   }
 });
 
-// === SENDGRID SETUP (REPLACES NODEMAILER) ===
-const sgMail = require('@sendgrid/mail');
+// === EMAILJS SETUP ===
+const EMAILJS_URL = 'https://api.emailjs.com/api/v1.0/email/send';
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID;
+const EMAILJS_USER_ID = process.env.EMAILJS_USER_ID;
+const EMAILJS_TEMPLATE_CONFIRM = process.env.EMAILJS_TEMPLATE_ID_CONFIRM; // ID for 'welcome' template
+const EMAILJS_TEMPLATE_REJECT = process.env.EMAILJS_TEMPLATE_ID_REJECT; // ID for 'auto_reply' template
+
 let mailerConfigured = false;
-// Use process.env.SMTP_USER for the verified SendGrid sender address (anjanideepaenterprises1@gmail.com)
+// Used as the sender email. Must be the connected Gmail account: anjanideepaenterprises1@gmail.com
 const COMPANY_EMAIL = process.env.SMTP_USER || 'contact@anjanideepa.example'; 
 
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+if (EMAILJS_SERVICE_ID && EMAILJS_USER_ID && EMAILJS_TEMPLATE_CONFIRM && EMAILJS_TEMPLATE_REJECT) {
   mailerConfigured = true;
-  console.log('SendGrid Mailer configured via API.');
+  console.log('EmailJS Mailer configured via API.');
 } else {
-  // Fallback/Warning for environments without SENDGRID_API_KEY
-  console.log('SendGrid Mailer not configured. Set SENDGRID_API_KEY to enable email sending.');
+  console.log('EmailJS Mailer not fully configured. Check all EmailJS environment variables.');
+}
+
+// Function to send email using EmailJS API
+async function sendEmailJS(templateId, templateParams) {
+    if (!mailerConfigured) {
+        throw new Error('EmailJS not configured.');
+    }
+
+    const payload = {
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: templateId,
+        user_id: EMAILJS_USER_ID,
+        template_params: templateParams,
+    };
+
+    try {
+        const response = await fetch(EMAILJS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+            console.log('EmailJS Response: Success');
+            return true;
+        } else {
+            const errorText = await response.text();
+            console.error(`EmailJS Response Error (${response.status}): ${errorText}`);
+            throw new Error(`EmailJS API failed with status ${response.status}: ${errorText}`);
+        }
+    } catch (e) {
+        console.error('EmailJS Fetch Error:', e);
+        throw e;
+    }
 }
 // ===========================================
 
@@ -131,7 +171,7 @@ app.get('/jobs/:id/apply', (req, res) => {
   res.render('apply', { job, error: null });
 });
 
-// NOTE: Set as async to use await for SendGrid API call
+// NOTE: Set as async to use await for EmailJS API call
 app.post('/jobs/:id/apply', async (req, res) => { 
   upload.single('resume')(req, res, async (err) => { 
     const jobs = readJobs();
@@ -186,39 +226,33 @@ app.post('/jobs/:id/apply', async (req, res) => {
     apps.push(application);
     writeApplications(apps);
 
-    // Prepare SendGrid mail object
-    const msg = {
-      to: application.email,
-      from: COMPANY_EMAIL, // Must be the verified single sender: anjanideepaenterprises1@gmail.com
-      subject: `Application Received: ${job.title} at Anjani Deepa Enterprises`,
-      text: `Dear ${application.name},\n\nSuccess! We've received your application for the ${job.title} role at Anjani Deepa Enterprises.\n\nYour profile is now under review by our hiring team. We appreciate your interest in joining us and will be in touch if your experience matches this exciting opportunity.\n\nGood luck!\n\nBest regards,\nThe Recruitment Team\nAnjani Deepa Enterprises`,
-      html: `<p>Dear ${application.name},</p>
-            <h2>🎉 Application Received Successfully!</h2>
-            <p>Thank you for submitting your application for the <strong>${job.title}</strong> position at <strong>Anjani Deepa Enterprises</strong>.</p>
-            <p>Your passion for the role is clear, and your profile is now under careful review by our dedicated hiring team. We're excited to evaluate your experience.</p>
-            <p>We will contact you directly if your background and qualifications align with this exciting opportunity.</p>
-            <p>Wishing you the very best of luck!</p>
-            <p>Best regards,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`,
-      // NOTE: Attachments can be complex, omitted for simplicity to fix core issue.
+    // Prepare EmailJS template parameters
+    const templateParams = {
+        applicant_name: name,
+        applicant_email: email,
+        job_title: job.title,
+        job_location: job.location,
+        phone_number: phone,
+        cover_letter: cover,
+        company_email: COMPANY_EMAIL // Used as the sender in the template
     };
     
-    // Send email using SendGrid API
+    // Send email using EmailJS API (using the 'welcome' template ID)
     if (mailerConfigured) {
       try {
-        const [response] = await sgMail.send(msg);
+        await sendEmailJS(EMAILJS_TEMPLATE_CONFIRM, templateParams);
         
-        console.log('Confirmation email sent to', application.email, 'SendGrid Status:', response.statusCode);
-        logMailAttempt({ to: application.email, subject: msg.subject, sent: true, status: response.statusCode });
+        console.log('Confirmation email sent to', application.email, 'via EmailJS');
+        logMailAttempt({ to: application.email, subject: `Application Received: ${job.title}`, sent: true, note: 'EmailJS' });
         
       } catch (err) {
-        // Log the actual error object from SendGrid
-        console.error('Error sending email via SendGrid API', err.response ? err.response.body : err); 
-        logMailAttempt({ to: application.email, subject: msg.subject, sent: false, error: String(err) });
+        console.error('Error sending email via EmailJS API', err); 
+        logMailAttempt({ to: application.email, subject: `Application Received: ${job.title}`, sent: false, error: String(err) });
       }
 
     } else {
-      console.log('Email (not sent) would be:', msg);
-      logMailAttempt({ to: application.email, subject: msg.subject, sent: false, note: 'SendGrid not configured' });
+      console.log('Email (not sent) would be:', templateParams);
+      logMailAttempt({ to: application.email, subject: `Application Received: ${job.title}`, sent: false, note: 'EmailJS not configured' });
     }
     
     res.render('apply-success', { job, application });
@@ -371,34 +405,29 @@ app.post('/admin/applications/:id/reject', async (req, res) => {
     const job = jobs.find(j => j.id === applicationToReject.jobId);
     if (job) jobTitle = job.title;
 
-    // Prepare SendGrid mail object
-    const msg = {
-      from: COMPANY_EMAIL,
-      to: applicationToReject.email,
-      subject: `Update on Your Application for ${jobTitle}`,
-      text: `Dear ${applicationToReject.name},\n\nThank you for your interest in the ${jobTitle} position at Anjani Deepa Enterprises.\n\nWe appreciate you taking the time to apply. After careful review, we regret to inform you that we will not be moving forward with your application at this time.\n\nWe wish you the best in your job search and encourage you to follow our careers page for future opportunities.\n\nSincerely,\nThe Recruitment Team\nAnjani Deepa Enterprises`,
-      html: `<p>Dear ${applicationToReject.name},</p>
-            <p>Thank you for your interest in the <strong>${jobTitle}</strong> position at <strong>Anjani Deepa Enterprises</strong>.</p>
-            <p>We appreciate you taking the time to apply. After careful review, we regret to inform you that we will not be moving forward with your application at this time.</p>
-            <p>We wish you the best in your job search and encourage you to follow our careers page for future opportunities.</p>
-            <p>Sincerely,<br/>The Recruitment Team<br/>Anjani Deepa Enterprises</p>`
+    // Prepare EmailJS template parameters
+    const templateParams = {
+        applicant_name: applicationToReject.name,
+        applicant_email: applicationToReject.email,
+        job_title: jobTitle,
+        company_email: COMPANY_EMAIL // Used as the sender in the template
     };
 
-    // Send email using SendGrid API
+    // Send email using EmailJS API (using the 'auto_reply' template ID)
     if (mailerConfigured) {
       try {
-        const [response] = await sgMail.send(msg);
+        await sendEmailJS(EMAILJS_TEMPLATE_REJECT, templateParams);
         
-        console.log('Rejection email sent to', applicationToReject.email, 'SendGrid Status:', response.statusCode);
-        logMailAttempt({ to: applicationToReject.email, subject: msg.subject, sent: true, status: response.statusCode, note: 'Rejection' });
+        console.log('Rejection email sent to', applicationToReject.email, 'via EmailJS');
+        logMailAttempt({ to: applicationToReject.email, subject: `Update on Application for ${jobTitle}`, sent: true, note: 'EmailJS Rejection' });
         
       } catch (err) {
-        console.error('Error sending rejection email via SendGrid API', err.response ? err.response.body : err);
-        logMailAttempt({ to: applicationToReject.email, subject: msg.subject, sent: false, note: 'Rejection - SendGrid error' });
+        console.error('Error sending rejection email via EmailJS API', err);
+        logMailAttempt({ to: applicationToReject.email, subject: `Update on Application for ${jobTitle}`, sent: false, note: 'EmailJS Rejection error' });
       }
     } else {
-      console.log('Rejection email (not sent, SendGrid not configured) would be:', msg);
-      logMailAttempt({ to: applicationToReject.email, subject: msg.subject, sent: false, note: 'Rejection - not configured' });
+      console.log('Rejection email (not sent, EmailJS not configured) would be:', templateParams);
+      logMailAttempt({ to: applicationToReject.email, subject: `Update on Application for ${jobTitle}`, sent: false, note: 'Rejection - not configured' });
     }
 
     const remainingApps = apps.filter((_, index) => index !== appIndex);
