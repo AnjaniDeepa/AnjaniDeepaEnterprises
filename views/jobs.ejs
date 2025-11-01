@@ -8,9 +8,25 @@
         <li class="job-item">
           <div class="meta">
             <h3><%= job.title %></h3>
-            <p class="small muted"><%= job.location %> • Openings: <%= job.openings || 1 %> • Exp: <%= job.experience || 0 %> yrs • Posted: <%= new Date(job.postedAt).toLocaleString() %></p>
-            <p><%= job.description %></p>
+            <p class="small muted">
+              <%= job.location %> • Openings: <%= job.openings || 1 %> • 
+              Exp: <%= job.experience || 0 %> yrs • 
+              Posted: <%= new Date(job.postedAt).toLocaleString() %>
+            </p>
+
+            <!-- Allow formatted HTML in job description -->
+            <div class="description">
+              <div class="description">
+  <%- job.description
+        .replace(/\n/g, '<br>')               // keep line breaks
+        .replace(/(^|\<br\>)([A-Z][A-Za-z ]+):/g, '$1<b>$2:</b>') // make headings bold
+  %>
+</div>
+
+
+            </div>
           </div>
+
           <div class="actions">
             <a class="apply-link" href="/jobs/<%= job.id %>/apply">Apply</a>
           </div>
